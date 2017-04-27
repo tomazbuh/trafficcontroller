@@ -20,6 +20,8 @@ OPTIONS:
    -a <adapter> Set the adpter
    -d <rate>    Set maximum download rate (in Kbps)
    -u <rate>    Set maximum upload rate (in Kbps)
+   -t <delay>   Set latency (in ms)
+   -l <loss>    Set packet loss (in %)
    -p           Use presets in /etc/conf.d/wondershaper.conf
    -c           Clear the limits from adapter
    -s           Show the current status of adapter
@@ -40,13 +42,17 @@ DSPEED=
 USPEED=
 IFACE=
 MODE=
+DELAY=0
+LOSS=0
 
-while getopts hd:u:a:pcs o
+while getopts hd:u:a:t:l:pcs o
 do	case "$o" in
 	h)	usage
 		exit 1;;
 	d)	DSPEED=$OPTARG;;
 	u)      USPEED=$OPTARG;;
+	t)      DELAY=$OPTARG;;
+	l)      LOSS=$OPTARG;;
 	a)      IFACE=$OPTARG;;
 	p)      MODE="presets";;
 	c)      MODE="clear";;
@@ -140,10 +146,23 @@ tc class add dev $IFACE parent 1:1 classid 1:30 cbq rate $[8*$USPEED/10]kbit \
    allot 1600 prio 2 avpkt 1000
 
 # all get Stochastic Fairness:
-tc qdisc add dev $IFACE parent 1:10 handle 10: sfq perturb 10
-tc qdisc add dev $IFACE parent 1:20 handle 20: sfq perturb 10
-tc qdisc add dev $IFACE parent 1:30 handle 30: sfq perturb 10
-
+LOSS_PART=''
+DELAY_PART=''
+if [ $LOSS -ne 0 ]; then
+  LOSS_PART="loss ${LOSS}%"
+fi
+if [ $DELAY -ne 0 ]; then
+  DELAY_PART="delay ${DELAY}ms"
+fi
+if [ $LOSS -ne 0 ] || [ $DELAY -ne 0 ]; then 
+   tc qdisc add dev $IFACE parent 1:10 handle 10: netem $DELAY_PART $LOSS_PART
+   tc qdisc add dev $IFACE parent 1:20 handle 20: netem $DELAY_PART $LOSS_PART
+   tc qdisc add dev $IFACE parent 1:30 handle 30: netem $DELAY_PART $LOSS_PART
+else
+   tc qdisc add dev $IFACE parent 1:10 handle 10: sfq perturb 10
+   tc qdisc add dev $IFACE parent 1:20 handle 20: sfq perturb 10
+   tc qdisc add dev $IFACE parent 1:30 handle 30: sfq perturb 10
+fi
 # start filters
 # TOS Minimum Delay (ssh, NOT scp) in 1:10:
 tc filter add dev $IFACE parent 1:0 protocol ip prio 10 u32 \
