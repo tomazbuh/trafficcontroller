@@ -22,6 +22,7 @@ OPTIONS:
    -u <rate>    Set maximum upload rate (in Kbps)
    -t <delay>   Set latency (in ms)
    -l <loss>    Set packet loss (in %)
+   -f           Use fair queuing - SFQ instead od pfifo 
    -p           Use presets in /etc/conf.d/wondershaper.conf
    -c           Clear the limits from adapter
    -s           Show the current status of adapter
@@ -44,8 +45,9 @@ IFACE=
 MODE=
 DELAY=0
 LOSS=0
+SFQ=0
 
-while getopts hd:u:a:t:l:pcs o
+while getopts hd:u:a:t:l:pcsf o
 do	case "$o" in
 	h)	usage
 		exit 1;;
@@ -57,6 +59,7 @@ do	case "$o" in
 	p)      MODE="presets";;
 	c)      MODE="clear";;
 	s)      MODE="status";;
+	f)      SFQ=1;;
 	[?])	usage
 		exit 1;;
 	esac
@@ -158,10 +161,14 @@ if [ $LOSS -ne 0 ] || [ $DELAY -ne 0 ]; then
    tc qdisc add dev $IFACE parent 1:10 handle 10: netem $DELAY_PART $LOSS_PART
    tc qdisc add dev $IFACE parent 1:20 handle 20: netem $DELAY_PART $LOSS_PART
    tc qdisc add dev $IFACE parent 1:30 handle 30: netem $DELAY_PART $LOSS_PART
-else
+elif [ $SFQ -eq 1 ]; then
    tc qdisc add dev $IFACE parent 1:10 handle 10: sfq perturb 10
    tc qdisc add dev $IFACE parent 1:20 handle 20: sfq perturb 10
    tc qdisc add dev $IFACE parent 1:30 handle 30: sfq perturb 10
+else
+   tc qdisc add dev $IFACE parent 1:10 handle 10: pfifo
+   tc qdisc add dev $IFACE parent 1:20 handle 20: pfifo
+   tc qdisc add dev $IFACE parent 1:30 handle 30: pfifo
 fi
 # start filters
 # TOS Minimum Delay (ssh, NOT scp) in 1:10:
