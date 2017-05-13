@@ -29,6 +29,7 @@ OPTIONS:
 
 MODES:
    wondershaper -a <adapter> -d <rate> -u <rate>
+   wondershaper -a <adapter> -t <delay> -l <loss>
    wondershaper -c -a <adapter>
    wondershaper -s -a <adapter>
 
@@ -98,10 +99,32 @@ then
     exit
 fi
 
-if [[ -z $DSPEED ]] || [[ -z $USPEED ]] || [[ -z $IFACE ]]
+
+if [[ -z $IFACE ]]
 then
     usage
     exit 1
+fi
+
+LOSS_PART=''
+DELAY_PART=''
+if [ $LOSS -ne 0 ]; then
+  LOSS_PART="loss ${LOSS}%"
+fi
+if [ $DELAY -ne 0 ]; then
+  DELAY_PART="delay ${DELAY}ms"
+fi
+
+
+if [[ -z $DSPEED ]] || [[ -z $USPEED ]] 
+then 
+   if [ $LOSS -ne 0 ] || [ $DELAY -ne 0 ]; then 
+      tc qdisc add dev $IFACE root netem $DELAY_PART $LOSS_PART
+      exit 0
+   else
+      usage
+      exit 1
+   fi
 fi
 
 # low priority OUTGOING traffic - you can leave this blank if you want
@@ -149,14 +172,6 @@ tc class add dev $IFACE parent 1:1 classid 1:30 cbq rate $[8*$USPEED/10]kbit \
    allot 1600 prio 2 avpkt 1000
 
 # all get Stochastic Fairness:
-LOSS_PART=''
-DELAY_PART=''
-if [ $LOSS -ne 0 ]; then
-  LOSS_PART="loss ${LOSS}%"
-fi
-if [ $DELAY -ne 0 ]; then
-  DELAY_PART="delay ${DELAY}ms"
-fi
 if [ $LOSS -ne 0 ] || [ $DELAY -ne 0 ]; then 
    tc qdisc add dev $IFACE parent 1:10 handle 10: netem $DELAY_PART $LOSS_PART
    tc qdisc add dev $IFACE parent 1:20 handle 20: netem $DELAY_PART $LOSS_PART
