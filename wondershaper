@@ -27,6 +27,9 @@ OPTIONS:
                     distribution
                     Use with -j option 
    -l <loss>        Set packet loss (in %)
+   -m <value>       Set mean loss burst size factor. Valid values: 
+                    4.00 3.33 3.00 2.85 2.50 2.22 2.00 1.82 1.66 1.54 
+                    1.50 1.43 1.33 1.30 1.25 1.17 1.11 1.05 1.00
    -f               Use fair queuing - SFQ instead od pfifo 
    -p               Use presets in /etc/conf.d/wondershaper.conf
    -c               Clear the limits from adapter
@@ -51,11 +54,12 @@ IFACE=
 MODE=
 DELAY=0
 LOSS=0
+MLBS=0
 SFQ=0
 JITTER=0
 CORELATION=-1
 
-while getopts hd:u:a:t:l:j:J:pcsf o
+while getopts hd:u:a:t:l:j:J:m:pcsf o
 do	case "$o" in
 	h)	usage
 		exit 1;;
@@ -65,6 +69,7 @@ do	case "$o" in
 	j)      JITTER=$OPTARG;;
 	J)      CORELATION=$OPTARG;;
 	l)      LOSS=$OPTARG;;
+	m)      MLBS=$OPTARG;;
 	a)      IFACE=$OPTARG;;
 	p)      MODE="presets";;
 	c)      MODE="clear";;
@@ -115,11 +120,46 @@ then
     exit 1
 fi
 
+
 LOSS_PART=''
 DELAY_PART=''
-if [ $LOSS -ne 0 ]; then
-  LOSS_PART="loss ${LOSS}%"
+
+RFACTOR=0
+PFACTOR=0
+if (( $(bc <<< "$MLBS > 0.00") )); then
+  case $MLBS in
+    4.00) RFACTOR=25;;
+    3.33) RFACTOR=30;;
+    3.00) RFACTOR=33;;
+    2.85) RFACTOR=35;;
+    2.50) RFACTOR=40;;
+    2.22) RFACTOR=45;;
+    2.00) RFACTOR=50;;
+    1.82) RFACTOR=55;;
+    1.66) RFACTOR=60;;
+    1.54) RFACTOR=65;;
+    1.50) RFACTOR=66;;
+    1.43) RFACTOR=70;;
+    1.33) RFACTOR=75;;
+    1.25) RFACTOR=80;;
+    1.17) RFACTOR=85;;
+    1.11) RFACTOR=90;;
+    1.05) RFACTOR=95;;
+    1.00) RFACTOR=100;;
+    *) echo "Unsupported MLBS value."
+       exit 1;;
+  esac
+  PFACTOR=$(bc <<< "scale=2;($LOSS/100*$RFACTOR/(1-$LOSS/100))")
 fi
+
+if [ $LOSS -ne 0 ]; then
+  if (( $(bc <<< "$MLBS > 0.00") )); then
+     LOSS_PART="loss gemodel ${PFACTOR}% ${RFACTOR}%"
+  else
+     LOSS_PART="loss ${LOSS}%"
+  fi
+fi
+
 if [ $DELAY -ne 0 ]; then
   DELAY_PART="delay ${DELAY}ms "
   if [ $JITTER -ne 0 ]; then
