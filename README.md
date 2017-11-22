@@ -65,24 +65,24 @@ The following command line options are allowed:
 
 
 OPTIONS:
-   -h               Show this message
-   -a <adapter>     Set the adpter
-   -d <rate>        Set maximum download rate (in Kbps)
-   -u <rate>        Set maximum upload rate (in Kbps)
-   -t <delay>       Set latency (in ms)
-   -j <jitter>      Set (average) latency variation (jitter) (in ms)
-                    Use with -t option. 
-   -J <corelation>  Set jitter corelation (in %) or 0 for normal
-                    distribution
-                    Use with -j option 
-   -l <loss>        Set packet loss (in %)
-   -m <value>       Set mean loss burst size factor. Valid values: 
-                    4.00 3.33 3.00 2.85 2.50 2.22 2.00 1.82 1.66 1.54 
-                    1.50 1.43 1.33 1.30 1.25 1.17 1.11 1.05 1.00
-   -f               Use fair queuing - SFQ instead od pfifo 
-   -p               Use presets in /etc/conf.d/trafficcontroller.conf
-   -c               Clear the limits from adapter
-   -s               Show the current status of adapter
+   -h               Show this message  
+   -a <adapter>     Set the adpter  
+   -d <rate>        Set maximum download rate (in Kbps)  
+   -u <rate>        Set maximum upload rate (in Kbps)  
+   -t <delay>       Set latency (in ms)  
+   -j <jitter>      Set (average) latency variation (jitter) (in ms)  
+                    Use with -t option.   
+   -J <corelation>  Set jitter corelation (in %) or 0 for normal  
+                    distribution  
+                    Use with -j option   
+   -l <loss>        Set packet loss (in %)  
+   -m <value>       Set mean loss burst size factor. Valid values:  
+                    4.00 3.33 3.00 2.85 2.50 2.22 2.00 1.82 1.66 1.54   
+                    1.50 1.43 1.33 1.30 1.25 1.17 1.11 1.05 1.00  
+   -f               Use fair queuing - SFQ instead od pfifo   
+   -p               Use presets in /etc/conf.d/trafficcontroller.conf  
+   -c               Clear the limits from adapter  
+   -s               Show the current status of adapter  
 
 
 
@@ -95,11 +95,19 @@ The different modes are:
 	trafficcontroller -s -a <adapter>
 
 Some examples:
-	#Limit bandwith
-	trafficcontroller -a eth0 -d 1024 -u 512
-	#Include delay and jitter
-	trafficcontroller -a eth0 -t 120 -j 30
-	#Include packet loss
-	trafficcontroller -a eth0 -l 50
-	#Clear all settings
-	trafficcontroller -c -a eth0
+
+	#Limit bandwith  
+
+	trafficcontroller -a eth0 -d 1024 -u 512  
+
+	#Include delay and jitter  
+
+	trafficcontroller -a eth0 -t 120 -j 30  
+
+	#Include packet loss  
+
+	trafficcontroller -a eth0 -l 50  
+
+	#Clear all settings  
+
+	trafficcontroller -c -a eth0  
