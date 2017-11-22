@@ -1,17 +1,21 @@
 #!/bin/bash 
-# Wonder Shaper
+# Traffic Controller by Tomaz Buh <hubber.devel@gmail.com>
+# Based on the Wonder Shaper application by bert hubert <ahu@ds9a.nl>, 
+# Copyright 2002, Licensed under the GPL 
+# and fixes by magnific0
+# (http://www.github.com/magnific0/trafficcontroller)
+# systemd .service and .conf file by kfgz and cmsigler at aur.archlinux.org
 #
-# Set the following values to somewhat less than your actual download
-# and uplink speed. In kilobits. Also set the device that is to be shaped.
-# 
-# Orginal: bert hubert <ahu@ds9a.nl>, Copyright 2002, Licensed under the GPL
-# Fixes: magnific0 (http://www.github.com/magnific0/wondershaper)
-#        systemd .service and .conf file by kfgz and cmsigler at aur.archlinux.org
+# Modify several factors which affect the Quality of Service of networking
+# systems and equipment. 
+# This includes: bandwidth, latency, jitter, packet loss and mean loss burst size 
+# factor. It can also use SFQ mechanism to shape traffic. 
+#
 
 usage()
 {
 cat << EOF
-USAGE: $0 [-hcs] [-a <adapter>] [-d <rate>] [-u <rate>]
+USAGE: $0 [-hcspf] [-a <adapter>] [-d <rate>] [-u <rate>] [-t <delay>] [-j <jitter>] [-J <corelation>] [-l <loss>] [-m <value>]
 
 Limit the bandwidth of an adapter, simulate packet loss, simulate traffic latency. 
 
@@ -21,7 +25,7 @@ OPTIONS:
    -d <rate>        Set maximum download rate (in Kbps)
    -u <rate>        Set maximum upload rate (in Kbps)
    -t <delay>       Set latency (in ms)
-   -j <time>        Set (average) latency variation (jitter) (in ms)
+   -j <jitter>      Set (average) latency variation (jitter) (in ms)
                     Use with -t option. 
    -J <corelation>  Set jitter corelation (in %) or 0 for normal
                     distribution
@@ -31,19 +35,19 @@ OPTIONS:
                     4.00 3.33 3.00 2.85 2.50 2.22 2.00 1.82 1.66 1.54 
                     1.50 1.43 1.33 1.30 1.25 1.17 1.11 1.05 1.00
    -f               Use fair queuing - SFQ instead od pfifo 
-   -p               Use presets in /etc/conf.d/wondershaper.conf
+   -p               Use presets in /etc/conf.d/trafficcontroller.conf
    -c               Clear the limits from adapter
    -s               Show the current status of adapter
 
 MODES:
-   wondershaper -a <adapter> -d <rate> -u <rate>
-   wondershaper -a <adapter> -t <delay> -l <loss>
-   wondershaper -c -a <adapter>
-   wondershaper -s -a <adapter>
+   trafficcontroller -a <adapter> -d <rate> -u <rate>
+   trafficcontroller -a <adapter> -t <delay> -l <loss>
+   trafficcontroller -c -a <adapter>
+   trafficcontroller -s -a <adapter>
 
 EXAMPLES:
-   wondershaper -a eth0 -d 1024 -u 512
-   wondershaper -c -a eth0
+   trafficcontroller -a eth0 -d 1024 -u 512
+   trafficcontroller -c -a eth0
 
 EOF
 }
@@ -82,11 +86,11 @@ done
 
 if [ "$MODE" = "presets" ]
 then
-    if [ -f /etc/conf.d/wondershaper.conf ]
+    if [ -f /etc/conf.d/trafficcontroller.conf ]
     then 
-	source /etc/conf.d/wondershaper.conf 
+	source /etc/conf.d/trafficcontroller.conf 
     else 
-	echo "/etc/conf.d/wondershaper.conf not found"
+	echo "/etc/conf.d/trafficcontroller.conf not found"
 	exit 1
     fi
 fi
