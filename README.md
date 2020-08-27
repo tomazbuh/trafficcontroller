@@ -27,15 +27,19 @@ simply run:
 Usage
 --------------
 
-USAGE: $0 [-hcspf] [-a <adapter>] [-d <rate>] [-u <rate>] [-t <delay>] [-j <jitter>] [-J <corelation>] [-l <loss>] [-m <value>]
-
-trafficcontroller [-hcspf] [-a <adapter>] [-d <rate>] [-u <rate>] [-t <delay>] [-j <jitter>] [-J <corelation>] [-l <loss>] [-m <value>]
+trafficcontroller [-hcspf] [-a <adapter>] [-d <rate>] [-u <rate>] [-t <delay>] [-j <jitter>] [-J <corelation>] [-l <loss>] [-m <value>] [-i <src_port,...>] [-o <dst_port,...>] [-r <src_port:dst_port,...>] <-b> <-c> <-s> <-f>
 
 The following command line options are allowed:
 
 - `-h` Display help
 
 - `-a <adapter>` Set the adapter
+
+- `-i <port>` Set source port numbers (limitations will apply only on ip traffic with specified source port)
+
+- `-o <port>` Set destination port numbers (limitations will apply only on ip traffic with specified destination port)
+
+- `-r <srcp:dstp,...>` Set source/destination port number pairs (limitations will apply only on ip traffic with specified source and destination ports)
 
 - `-d <rate>` Set maximum download rate (in Kbps)
 
@@ -56,6 +60,8 @@ The following command line options are allowed:
                     1.50 1.43 1.33 1.30 1.25 1.17 1.11 1.05 1.00 
 
 - `-f` Use fair queuing - SFQ instead od pfifo. 
+
+- `-b` Apply impairments on ICMP protocol
 
 - `-p` Use the presets in /etc/conf.d/trafficcontroller.conf
 
@@ -80,6 +86,14 @@ Some examples:
 	#Include delay and jitter  
 
 	trafficcontroller -a eth0 -t 120 -j 30  
+	
+        #Specify the same impairment on traffic on ip traffic with source port 6000 AND destination port 7000  
+
+	trafficcontroller -a eth0 -t 120 -j 30  -r 6000:7000
+	
+        #Specify the same impairment on traffic on ip traffic with destination port 5060
+
+	trafficcontroller -a eth0 -t 120 -j 30  -o 5060
 
 	#Include packet loss  
 

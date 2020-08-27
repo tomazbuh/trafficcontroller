@@ -15,29 +15,35 @@
 usage()
 {
 cat << EOF
-USAGE: $0 [-hcspf] [-a <adapter>] [-d <rate>] [-u <rate>] [-t <delay>] [-j <jitter>] [-J <corelation>] [-l <loss>] [-m <value>]
+USAGE: $0 [-hcspfb] [-a <adapter>] [-d <rate>] [-u <rate>] [-t <delay>] [-j <jitter>] \
+ [-J <corelation>] [-l <loss>] [-m <value>] [-i <src_port,...>] [-o <dst_port,...>]\
+[-r <src_port:dst_port,...>]
 
 Limit the bandwidth of an adapter, simulate packet loss, simulate traffic latency. 
 
 OPTIONS:
-   -h               Show this message
-   -a <adapter>     Set the adpter
-   -d <rate>        Set maximum download rate (in Kbps)
-   -u <rate>        Set maximum upload rate (in Kbps)
-   -t <delay>       Set latency (in ms)
-   -j <jitter>      Set (average) latency variation (jitter) (in ms)
-                    Use with -t option. 
-   -J <corelation>  Set jitter corelation (in %) or 0 for normal
-                    distribution
-                    Use with -j option 
-   -l <loss>        Set packet loss (in %)
-   -m <value>       Set mean loss burst size factor. Valid values: 
-                    4.00 3.33 3.00 2.85 2.50 2.22 2.00 1.82 1.66 1.54 
-                    1.50 1.43 1.33 1.30 1.25 1.17 1.11 1.05 1.00
-   -f               Use fair queuing - SFQ instead od pfifo 
-   -p               Use presets in /etc/conf.d/trafficcontroller.conf
-   -c               Clear the limits from adapter
-   -s               Show the current status of adapter
+   -h                 Show this message
+   -a <adapter>       Set the adpter
+   -i <port,...>      Set source port numbers
+   -o <port,...>      Set destination port numbers
+   -r <srcp:dstp,...> Set source/destination port number pairs
+   -d <rate>          Set maximum download rate (in Kbps)
+   -u <rate>          Set maximum upload rate (in Kbps)
+   -t <delay>         Set latency (in ms)
+   -j <jitter>        Set (average) latency variation (jitter) (in ms)
+                      Use with -t option. 
+   -J <corelation>    Set jitter corelation (in %) or 0 for normal
+                      distribution
+                      Use with -j option 
+   -l <loss>          Set packet loss (in %)
+   -m <value>         Set mean loss burst size factor. Valid values: 
+                      4.00 3.33 3.00 2.85 2.50 2.22 2.00 1.82 1.66 1.54 
+                      1.50 1.43 1.33 1.30 1.25 1.17 1.11 1.05 1.00
+   -b                 Apply impairments on ICMP protocol
+   -f                 Use fair queuing - SFQ instead od pfifo 
+   -p                 Use presets in /etc/conf.d/trafficcontroller.conf
+   -c                 Clear the limits from adapter
+   -s                 Show the current status of adapter
 
 MODES:
    trafficcontroller -a <adapter> -d <rate> -u <rate>
@@ -52,6 +58,8 @@ EXAMPLES:
 EOF
 }
 
+MAXSPEED="100gbit"
+
 DSPEED=
 USPEED=
 IFACE=
@@ -62,8 +70,22 @@ MLBS=0
 SFQ=0
 JITTER=0
 CORELATION=-1
+S_PORTS=
+D_PORTS=
+PORT_PAIRS=
+APPLY_TO_ICMP=0
 
-while getopts hd:u:a:t:l:j:J:m:pcsf o
+# low priority OUTGOING traffic - you can leave this blank if you want
+# low priority source netmasks
+NOPRIOHOSTSRC=
+# low priority destination netmasks
+NOPRIOHOSTDST=
+# low priority source ports
+NOPRIOPORTSRC=
+# low priority destination ports
+NOPRIOPORTDST=
+
+while getopts hd:u:a:t:l:j:J:m:pcsfo:i:r:b o
 do	case "$o" in
 	h)	usage
 		exit 1;;
@@ -75,7 +97,11 @@ do	case "$o" in
 	l)      LOSS=$OPTARG;;
 	m)      MLBS=$OPTARG;;
 	a)      IFACE=$OPTARG;;
+	i)      S_PORTS=$OPTARG;;
+	o)      D_PORTS=$OPTARG;;
+	r)      PORT_PAIRS=$OPTARG;;
 	p)      MODE="presets";;
+	b)      APPLY_TO_ICMP=1;;
 	c)      MODE="clear";;
 	s)      MODE="status";;
 	f)      SFQ=1;;
@@ -107,6 +133,7 @@ if [ "$MODE" = "status" ]
 then
     tc -s qdisc ls dev $IFACE
     tc -s class ls dev $IFACE
+    tc -s filter ls dev $IFACE
     exit
 fi
 
@@ -124,6 +151,16 @@ then
     exit 1
 fi
 
+
+if [[ -n $D_PORTS  ]]; then
+   DPORTS=`echo $D_PORTS | tr ',' ' '`
+fi
+if [[ -n $S_PORTS  ]]; then
+   SPORTS=`echo $S_PORTS | tr ',' ' '`
+fi
+if [[ -n $PORT_PAIRS  ]]; then
+   PORTPAIRS=`echo $PORT_PAIRS | tr ',' ' '`
+fi
 
 LOSS_PART=''
 DELAY_PART=''
@@ -175,12 +212,36 @@ if [ $DELAY -ne 0 ]; then
     DELAY_PART=${DELAY_PART}${CORELATION}"% "
   fi
 fi
-
-
-if [[ -z $DSPEED ]] || [[ -z $USPEED ]] 
-then 
-   if [ $LOSS -ne 0 ] || [ $DELAY -ne 0 ]; then 
-      tc qdisc add dev $IFACE root netem $DELAY_PART $LOSS_PART
+#clean old configuration
+tc qdisc del dev $IFACE root    2> /dev/null > /dev/null
+tc qdisc del dev $IFACE ingress 2> /dev/null > /dev/null
+###### loss and delay without speed limitation
+if [[ -z $DSPEED ]] && [[ -z $USPEED ]]; then 
+   if [ $LOSS -ne 0 ] || [ $DELAY -ne 0 ]; then
+      tc qdisc add dev $IFACE root handle 1: htb default 1
+      tc class add dev $IFACE parent 1: classid 1:1 htb rate $MAXSPEED
+      tc class add dev $IFACE parent 1: classid 1:2 htb rate $MAXSPEED
+      tc qdisc add dev $IFACE parent 1:1 handle 10: pfifo
+      tc qdisc add dev $IFACE parent 1:2 handle 20: netem $DELAY_PART $LOSS_PART
+      #Apply impairments to ICMP 
+      if [[ $APPLY_TO_ICMP -eq 1 ]]; then
+        tc filter add dev $IFACE protocol ip parent 1:0 prio 1 u32 match ip protocol 1 0xff flowid 1:2
+      fi
+      for port in $DPORTS
+      do
+        tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip dport $port 0xffff flowid 1:2
+      done
+      for port in $SPORTS
+      do
+        tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip sport $port 0xffff flowid 1:2
+      done
+      for portpair in $PORTPAIRS
+      do
+	s_port="$(echo $portpair | cut -d':' -f1)"
+	d_port="$(echo $portpair | cut -d':' -f2)"
+        tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip sport $s_port 0xffff match ip dport $d_port 0xffff flowid 1:2
+      done
+      #tc qdisc add dev $IFACE root netem $DELAY_PART $LOSS_PART
       exit 0
    else
       usage
@@ -188,126 +249,164 @@ then
    fi
 fi
 
-# low priority OUTGOING traffic - you can leave this blank if you want
-# low priority source netmasks
-NOPRIOHOSTSRC=80
 
-# low priority destination netmasks
-NOPRIOHOSTDST=
+###### uplink limitiations
+if [[ -n $USPEED ]]; then
+  # install root CBQ
+  tc qdisc add dev $IFACE root handle 1: cbq avpkt 1000 bandwidth 10gbit 
 
-# low priority source ports
-NOPRIOPORTSRC=
+  # shape everything at $USPEED speed - this prevents huge queues in your
+  # DSL modem which destroy latency:
+  # main class
 
-# low priority destination ports
-NOPRIOPORTDST=
+  tc class add dev $IFACE parent 1: classid 1:1 cbq rate ${USPEED}kbit \
+  allot 1500 prio 5 bounded isolated 
+
+  #tc class add dev $IFACE parent 1: classid 1:2 cbq rate ${MAXSPEED} \
+  tc class add dev $IFACE parent 1: classid 1:2 cbq rate 10gbit \
+  allot 1500 prio 6 bounded isolated 
+  # high prio class 1:10:
+
+  tc class add dev $IFACE parent 1:1 classid 1:10 cbq rate ${USPEED}kbit \
+     allot 1600 prio 1 avpkt 1000
+
+  # bulk and default class 1:20 - gets slightly less traffic, 
+  #  and a lower priority:
+
+  tc class add dev $IFACE parent 1:1 classid 1:20 cbq rate $[9*$USPEED/10]kbit \
+     allot 1600 prio 2 avpkt 1000
+
+  # 'traffic we hate'
+
+  tc class add dev $IFACE parent 1:1 classid 1:30 cbq rate $[8*$USPEED/10]kbit \
+     allot 1600 prio 2 avpkt 1000
+
+  # all get Stochastic Fairness:
+  if [ $LOSS -ne 0 ] || [ $DELAY -ne 0 ]; then 
+     tc qdisc add dev $IFACE parent 1:10 handle 10: netem $DELAY_PART $LOSS_PART
+     tc qdisc add dev $IFACE parent 1:20 handle 20: netem $DELAY_PART $LOSS_PART
+     tc qdisc add dev $IFACE parent 1:30 handle 30: netem $DELAY_PART $LOSS_PART
+  elif [ $SFQ -eq 1 ]; then
+     tc qdisc add dev $IFACE parent 1:10 handle 10: sfq perturb 10
+     tc qdisc add dev $IFACE parent 1:20 handle 20: sfq perturb 10
+     tc qdisc add dev $IFACE parent 1:30 handle 30: sfq perturb 10
+  else
+     tc qdisc add dev $IFACE parent 1:10 handle 10: pfifo
+     tc qdisc add dev $IFACE parent 1:20 handle 20: pfifo
+     tc qdisc add dev $IFACE parent 1:30 handle 30: pfifo
+  fi
+  # default traffic goes with pfifo
+  tc qdisc add dev $IFACE parent 1:2 handle 90: pfifo
 
 
+  # start filters
+  for port in $DPORTS
+  do
+    tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip dport $port 0xffff flowid 1:1
+  done
+  for port in $SPORTS
+  do
+    tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip sport $port 0xffff flowid 1:1
+  done
+  for portpair in $PORTPAIRS
+  do
+    s_port="$(echo $portpair | cut -d':' -f1)"
+    d_port="$(echo $portpair | cut -d':' -f2)"
+    tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip sport $s_port 0xffff match ip dport $d_port 0xffff flowid 1:1
+  done
+  #Apply impairments to ICMP if specified
+  if [[ $APPLY_TO_ICMP -eq 1 ]]; then
+    tc filter add dev $IFACE protocol ip parent 1:0 prio 1 u32 match ip protocol 1 0xff flowid 1:1
+  fi
+  #traffic without specified ports sent to 1:2
+  tc filter add dev $IFACE parent 1: protocol all prio 9 u32 match u32 0 0 flowid 1:2
 
-###### uplink
 
-# install root CBQ
-
-tc qdisc add dev $IFACE root handle 1: cbq avpkt 1000 bandwidth 10mbit 
-
-# shape everything at $USPEED speed - this prevents huge queues in your
-# DSL modem which destroy latency:
-# main class
-
-tc class add dev $IFACE parent 1: classid 1:1 cbq rate ${USPEED}kbit \
-allot 1500 prio 5 bounded isolated 
-
-# high prio class 1:10:
-
-tc class add dev $IFACE parent 1:1 classid 1:10 cbq rate ${USPEED}kbit \
-   allot 1600 prio 1 avpkt 1000
-
-# bulk and default class 1:20 - gets slightly less traffic, 
-#  and a lower priority:
-
-tc class add dev $IFACE parent 1:1 classid 1:20 cbq rate $[9*$USPEED/10]kbit \
-   allot 1600 prio 2 avpkt 1000
-
-# 'traffic we hate'
-
-tc class add dev $IFACE parent 1:1 classid 1:30 cbq rate $[8*$USPEED/10]kbit \
-   allot 1600 prio 2 avpkt 1000
-
-# all get Stochastic Fairness:
-if [ $LOSS -ne 0 ] || [ $DELAY -ne 0 ]; then 
-   tc qdisc add dev $IFACE parent 1:10 handle 10: netem $DELAY_PART $LOSS_PART
-   tc qdisc add dev $IFACE parent 1:20 handle 20: netem $DELAY_PART $LOSS_PART
-   tc qdisc add dev $IFACE parent 1:30 handle 30: netem $DELAY_PART $LOSS_PART
-elif [ $SFQ -eq 1 ]; then
-   tc qdisc add dev $IFACE parent 1:10 handle 10: sfq perturb 10
-   tc qdisc add dev $IFACE parent 1:20 handle 20: sfq perturb 10
-   tc qdisc add dev $IFACE parent 1:30 handle 30: sfq perturb 10
-else
-   tc qdisc add dev $IFACE parent 1:10 handle 10: pfifo
-   tc qdisc add dev $IFACE parent 1:20 handle 20: pfifo
-   tc qdisc add dev $IFACE parent 1:30 handle 30: pfifo
-fi
-# start filters
-# TOS Minimum Delay (ssh, NOT scp) in 1:10:
-tc filter add dev $IFACE parent 1:0 protocol ip prio 10 u32 \
+  # TOS Minimum Delay (ssh, NOT scp) in 1:10:
+  tc filter add dev $IFACE parent 1:1 protocol ip prio 10 u32 \
       match ip tos 0x10 0xff  flowid 1:10
 
-# ICMP (ip protocol 1) in the interactive class 1:10 so we 
-# can do measurements & impress our friends:
-tc filter add dev $IFACE parent 1:0 protocol ip prio 11 u32 \
-        match ip protocol 1 0xff flowid 1:10
+  # ICMP (ip protocol 1) in the interactive class 1:10 so we 
+  # can do measurements & impress our friends:
+  #if [[ $APPLY_TO_ICMP -eq 1 ]]; then
+  #  tc filter add dev $IFACE parent 1:1 protocol ip prio 11 u32 \
+  #      match ip protocol 1 0xff flowid 1:10
+  #fi
+  # prioritize small packets (<64 bytes)
 
-# prioritize small packets (<64 bytes)
+  tc filter add dev $IFACE parent 1:1 protocol ip prio 12 u32 \
+     match ip protocol 6 0xff \
+     match u8 0x05 0x0f at 0 \
+     match u16 0x0000 0xffc0 at 2 \
+     flowid 1:10
 
-tc filter add dev $IFACE parent 1: protocol ip prio 12 u32 \
-   match ip protocol 6 0xff \
-   match u8 0x05 0x0f at 0 \
-   match u16 0x0000 0xffc0 at 2 \
-   flowid 1:10
-
-
-# some traffic however suffers a worse fate
-for a in $NOPRIOPORTDST
-do
-	tc filter add dev $IFACE parent 1: protocol ip prio 14 u32 \
+  
+  # some traffic however suffers a worse fate
+  for a in $NOPRIOPORTDST
+  do
+	tc filter add dev $IFACE parent 1:1 protocol ip prio 14 u32 \
 	   match ip dport $a 0xffff flowid 1:30
-done
+  done
 
-for a in $NOPRIOPORTSRC
-do
- 	tc filter add dev $IFACE parent 1: protocol ip prio 15 u32 \
+  for a in $NOPRIOPORTSRC
+  do
+ 	tc filter add dev $IFACE parent 1:1 protocol ip prio 15 u32 \
 	   match ip sport $a 0xffff flowid 1:30
-done
+  done
 
-for a in $NOPRIOHOSTSRC
-do
- 	tc filter add dev $IFACE parent 1: protocol ip prio 16 u32 \
+  for a in $NOPRIOHOSTSRC
+  do
+ 	tc filter add dev $IFACE parent 1:1 protocol ip prio 16 u32 \
 	   match ip src $a flowid 1:30
-done
+  done
 
-for a in $NOPRIOHOSTDST
-do
- 	tc filter add dev $IFACE parent 1: protocol ip prio 17 u32 \
+  for a in $NOPRIOHOSTDST
+  do
+   	tc filter add dev $IFACE parent 1:1 protocol ip prio 17 u32 \
 	   match ip dst $a flowid 1:30
-done
+  done
 
-# rest is 'non-interactive' ie 'bulk' and ends up in 1:20
+  # rest is 'non-interactive' ie 'bulk' and ends up in 1:20
 
-tc filter add dev $IFACE parent 1: protocol ip prio 18 u32 \
-   match ip dst 0.0.0.0/0 flowid 1:20
+  tc filter add dev $IFACE parent 1:1 protocol ip prio 18 u32 \
+     match ip dst 0.0.0.0/0 flowid 1:20
 
+fi
+########## downlink limitations #############
+if [[ -n $DSPEED ]]; then
+  # slow downloads down to somewhat less than the real speed  to prevent 
+  # queuing at our ISP. Tune to see how high you can set it.
+  # ISPs tend to have *huge* queues to make sure big downloads are fast
+  #
+  # attach ingress policer:
 
-########## downlink #############
-# slow downloads down to somewhat less than the real speed  to prevent 
-# queuing at our ISP. Tune to see how high you can set it.
-# ISPs tend to have *huge* queues to make sure big downloads are fast
-#
-# attach ingress policer:
+  tc qdisc add dev $IFACE handle ffff: ingress
 
-tc qdisc add dev $IFACE handle ffff: ingress
+  # OLD VERSION: filter *everything* to it (0.0.0.0/0), drop everything that's
+  # coming in too fast:
 
-# filter *everything* to it (0.0.0.0/0), drop everything that's
-# coming in too fast:
+  #tc filter add dev $IFACE parent ffff: protocol ip prio 50 u32 match ip src \
+  #   0.0.0.0/0 police rate ${DSPEED}kbit burst 10k drop flowid :1
 
-tc filter add dev $IFACE parent ffff: protocol ip prio 50 u32 match ip src \
-   0.0.0.0/0 police rate ${DSPEED}kbit burst 10k drop flowid :1
-
+  for port in $DPORTS
+  do
+    tc filter add dev $IFACE parent ffff: protocol ip prio 50 u32 \
+	    match ip dport $port 0xffff police rate ${DSPEED}kbit \
+	    burst 10k drop flowid :1
+  done
+  for port in $SPORTS
+  do
+    tc filter add dev $IFACE parent ffff: protocol ip prio 51 u32 \
+	    match ip sport $port 0xffff police rate ${DSPEED}kbit \
+	    burst 10k drop flowid :1
+  done
+  for portpair in $PORTPAIRS
+  do
+    s_port="$(echo $portpair | cut -d':' -f1)"
+    d_port="$(echo $portpair | cut -d':' -f2)"
+    tc filter add dev $IFACE parent ffff: protocol ip prio 52 u32 \
+	    match ip sport $s_port 0xffff match ip dport $d_port 0xffff \
+	    police rate ${DSPEED}kbit burst 10k drop flowid :1
+  done
+  #tc filter add dev $IFACE parent ffff: protocol ip prio 30 u32 match u32 0 0  police rate ${DSPEED}kbit burst 10k drop flowid :1
+fi
