@@ -216,31 +216,39 @@ fi
 tc qdisc del dev $IFACE root    2> /dev/null > /dev/null
 tc qdisc del dev $IFACE ingress 2> /dev/null > /dev/null
 ###### loss and delay without speed limitation
+SPECIFIC_TRAFFIC=0
 if [[ -z $DSPEED ]] && [[ -z $USPEED ]]; then 
    if [ $LOSS -ne 0 ] || [ $DELAY -ne 0 ]; then
-      tc qdisc add dev $IFACE root handle 1: htb default 1
-      tc class add dev $IFACE parent 1: classid 1:1 htb rate $MAXSPEED
-      tc class add dev $IFACE parent 1: classid 1:2 htb rate $MAXSPEED
-      tc qdisc add dev $IFACE parent 1:1 handle 10: pfifo
-      tc qdisc add dev $IFACE parent 1:2 handle 20: netem $DELAY_PART $LOSS_PART
+      tc qdisc add dev $IFACE root handle 1: htb default 2
+      tc class add dev $IFACE parent 1: classid 1:1 htb rate $MAXSPEED #impaired
+      tc class add dev $IFACE parent 1: classid 1:2 htb rate $MAXSPEED #not impaired
+      tc qdisc add dev $IFACE parent 1:1 handle 10: netem $DELAY_PART $LOSS_PART
+      tc qdisc add dev $IFACE parent 1:2 handle 20: pfifo
       #Apply impairments to ICMP 
       if [[ $APPLY_TO_ICMP -eq 1 ]]; then
-        tc filter add dev $IFACE protocol ip parent 1:0 prio 1 u32 match ip protocol 1 0xff flowid 1:2
+        tc filter add dev $IFACE protocol ip parent 1:0 prio 1 u32 match ip protocol 1 0xff flowid 1:1
       fi
       for port in $DPORTS
       do
-        tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip dport $port 0xffff flowid 1:2
+        SPECIFIC_TRAFFIC=1
+        tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip dport $port 0xffff flowid 1:1
       done
       for port in $SPORTS
       do
-        tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip sport $port 0xffff flowid 1:2
+        SPECIFIC_TRAFFIC=1
+        tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip sport $port 0xffff flowid 1:1
       done
       for portpair in $PORTPAIRS
       do
+        SPECIFIC_TRAFFIC=1
 	s_port="$(echo $portpair | cut -d':' -f1)"
 	d_port="$(echo $portpair | cut -d':' -f2)"
-        tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip sport $s_port 0xffff match ip dport $d_port 0xffff flowid 1:2
+        tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip sport $s_port 0xffff match ip dport $d_port 0xffff flowid 1:1
       done
+      #if specific filers are not applied send all traffic to 1:1 (impaired)
+      if [[ $SPECIFIC_TRAFFIC -eq 0 ]]; then
+        tc filter add dev $IFACE parent 1: protocol all prio 9 u32 match u32 0 0 flowid 1:1
+      fi
       #tc qdisc add dev $IFACE root netem $DELAY_PART $LOSS_PART
       exit 0
    else
@@ -251,6 +259,7 @@ fi
 
 
 ###### uplink limitiations
+SPECIFIC_TRAFFIC=0
 if [[ -n $USPEED ]]; then
   # install root CBQ
   tc qdisc add dev $IFACE root handle 1: cbq avpkt 1000 bandwidth 10gbit 
@@ -303,24 +312,31 @@ if [[ -n $USPEED ]]; then
   for port in $DPORTS
   do
     tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip dport $port 0xffff flowid 1:1
+    SPECIFIC_TRAFFIC=1
   done
   for port in $SPORTS
   do
     tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip sport $port 0xffff flowid 1:1
+    SPECIFIC_TRAFFIC=1
   done
   for portpair in $PORTPAIRS
   do
     s_port="$(echo $portpair | cut -d':' -f1)"
     d_port="$(echo $portpair | cut -d':' -f2)"
     tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip sport $s_port 0xffff match ip dport $d_port 0xffff flowid 1:1
+    SPECIFIC_TRAFFIC=1
   done
   #Apply impairments to ICMP if specified
   if [[ $APPLY_TO_ICMP -eq 1 ]]; then
     tc filter add dev $IFACE protocol ip parent 1:0 prio 1 u32 match ip protocol 1 0xff flowid 1:1
   fi
-  #traffic without specified ports sent to 1:2
-  tc filter add dev $IFACE parent 1: protocol all prio 9 u32 match u32 0 0 flowid 1:2
-
+  if [[ $SPECIFIC_TRAFFIC -eq 0 ]]; then
+    #if specific filers are not applied send all traffic to 1:1 (impaired)
+    tc filter add dev $IFACE parent 1: protocol all prio 9 u32 match u32 0 0 flowid 1:1
+  else
+    #traffic without specified ports sent to 1:2 (not impaired)
+    tc filter add dev $IFACE parent 1: protocol all prio 9 u32 match u32 0 0 flowid 1:2
+  fi
 
   # TOS Minimum Delay (ssh, NOT scp) in 1:10:
   tc filter add dev $IFACE parent 1:1 protocol ip prio 10 u32 \
