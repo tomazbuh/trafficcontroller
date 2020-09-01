@@ -24,9 +24,16 @@ Limit the bandwidth of an adapter, simulate packet loss, simulate traffic latenc
 OPTIONS:
    -h                 Show this message
    -a <adapter>       Set the adpter
-   -i <port,...>      Set source port numbers
-   -o <port,...>      Set destination port numbers
-   -r <srcp:dstp,...> Set source/destination port number pairs
+   -b <protocol,...>  Apply impairments on specific protocols. Otherwise all traffic is impaired. 
+                      Currently supported protocol filters: icmp, udp and tcp). 
+                      To specify ports for tcp and udp see options: -i, -o and -r. Otherwise 
+                      all ports will be used. 
+   -i <port,...>      Set source port numbers for tcp or udp (see -b)
+                      (if no protocol is specified with -b option both protocols are selected)
+   -o <port,...>      Set destination port numbers for tcp or udp (see -b)
+                      (if no protocol is specified with -b option both protocols are selected)
+   -r <srcp:dstp,...> Set source/destination port number pairs for tcp or udp (see -b)
+                      (if no protocol is specified with -b option both protocols are selected)
    -d <rate>          Set maximum download rate (in Kbps)
    -u <rate>          Set maximum upload rate (in Kbps)
    -t <delay>         Set latency (in ms)
@@ -39,7 +46,6 @@ OPTIONS:
    -m <value>         Set mean loss burst size factor. Valid values: 
                       4.00 3.33 3.00 2.85 2.50 2.22 2.00 1.82 1.66 1.54 
                       1.50 1.43 1.33 1.30 1.25 1.17 1.11 1.05 1.00
-   -b                 Apply impairments on ICMP protocol
    -f                 Use fair queuing - SFQ instead od pfifo 
    -p                 Use presets in /etc/conf.d/trafficcontroller.conf
    -c                 Clear the limits from adapter
@@ -58,7 +64,7 @@ EXAMPLES:
 EOF
 }
 
-MAXSPEED="100gbit"
+MAXSPEED="10gbit"
 
 DSPEED=
 USPEED=
@@ -73,7 +79,11 @@ CORELATION=-1
 S_PORTS=
 D_PORTS=
 PORT_PAIRS=
+PROTOCOL_FILTER=
+PROTOCOLS=
 APPLY_TO_ICMP=0
+APPLY_TO_UDP=0
+APPLY_TO_TCP=0
 
 # low priority OUTGOING traffic - you can leave this blank if you want
 # low priority source netmasks
@@ -85,7 +95,7 @@ NOPRIOPORTSRC=
 # low priority destination ports
 NOPRIOPORTDST=
 
-while getopts hd:u:a:t:l:j:J:m:pcsfo:i:r:b o
+while getopts hd:u:a:t:l:j:J:m:pcsfo:i:r:b: o
 do	case "$o" in
 	h)	usage
 		exit 1;;
@@ -101,7 +111,7 @@ do	case "$o" in
 	o)      D_PORTS=$OPTARG;;
 	r)      PORT_PAIRS=$OPTARG;;
 	p)      MODE="presets";;
-	b)      APPLY_TO_ICMP=1;;
+	b)      PROTOCOL_FILTER=$OPTARG;;
 	c)      MODE="clear";;
 	s)      MODE="status";;
 	f)      SFQ=1;;
@@ -161,6 +171,31 @@ fi
 if [[ -n $PORT_PAIRS  ]]; then
    PORTPAIRS=`echo $PORT_PAIRS | tr ',' ' '`
 fi
+if [[ -n $PROTOCOL_FILTER  ]]; then
+   PROTOCOLS=`echo $PROTOCOL_FILTER | tr ',' ' '`
+fi
+
+for proto in $PROTOCOLS
+do
+  KNOWN_PROTO=0
+  if [[ $proto = "icmp" ]]; then
+    APPLY_TO_ICMP=1
+    KNOWN_PROTO=1
+  fi
+  if [[ $proto = "tcp" ]]; then
+    APPLY_TO_TCP=1
+    KNOWN_PROTO=1
+  fi
+  if [[ $proto = "udp" ]]; then
+    APPLY_TO_UDP=1
+    KNOWN_PROTO=1
+  fi
+  if [[ $KNOWN_PROTO -eq 0 ]]; then
+    echo "ERROR: Unknown protocol specified: $proto".  
+    usage
+    exit 1
+  fi
+done
 
 LOSS_PART=''
 DELAY_PART=''
@@ -217,6 +252,7 @@ tc qdisc del dev $IFACE root    2> /dev/null > /dev/null
 tc qdisc del dev $IFACE ingress 2> /dev/null > /dev/null
 ###### loss and delay without speed limitation
 SPECIFIC_TRAFFIC=0
+SPECIFIC_PORTS=0
 if [[ -z $DSPEED ]] && [[ -z $USPEED ]]; then 
    if [ $LOSS -ne 0 ] || [ $DELAY -ne 0 ]; then
       tc qdisc add dev $IFACE root handle 1: htb default 2
@@ -226,29 +262,70 @@ if [[ -z $DSPEED ]] && [[ -z $USPEED ]]; then
       tc qdisc add dev $IFACE parent 1:2 handle 20: pfifo
       #Apply impairments to ICMP 
       if [[ $APPLY_TO_ICMP -eq 1 ]]; then
+        SPECIFIC_TRAFFIC=1
         tc filter add dev $IFACE protocol ip parent 1:0 prio 1 u32 match ip protocol 1 0xff flowid 1:1
       fi
+      #Apply impairments to TCP and UDP
       for port in $DPORTS
       do
         SPECIFIC_TRAFFIC=1
-        tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip dport $port 0xffff flowid 1:1
+        SPECIFIC_PORTS=1
+	if [[ $APPLY_TO_TCP -eq 1 ]]; then
+          tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip protocol 6 0xff match ip dport $port 0xffff flowid 1:1
+	fi
+	if [[ $APPLY_TO_UDP -eq 1 ]]; then
+          tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip protocol 17 0xff match ip dport $port 0xffff flowid 1:1
+	fi
+	if [[ $APPLY_TO_TCP -eq 0 ]] && [[ $APPLY_TO_UDP -eq 0 ]]; then
+          tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip dport $port 0xffff flowid 1:1
+        fi
       done
       for port in $SPORTS
       do
         SPECIFIC_TRAFFIC=1
-        tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip sport $port 0xffff flowid 1:1
+        SPECIFIC_PORTS=1
+	if [[ $APPLY_TO_TCP -eq 1 ]]; then
+          tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip protocol 6 0xff match ip sport $port 0xffff flowid 1:1
+	fi
+	if [[ $APPLY_TO_UDP -eq 1 ]]; then
+          tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip protocol 17 0xff match ip sport $port 0xffff flowid 1:1
+	fi
+	if [[ $APPLY_TO_TCP -eq 0 ]] && [[ $APPLY_TO_UDP -eq 0 ]]; then
+          tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip sport $port 0xffff flowid 1:1
+        fi
       done
       for portpair in $PORTPAIRS
       do
         SPECIFIC_TRAFFIC=1
+        SPECIFIC_PORTS=1
 	s_port="$(echo $portpair | cut -d':' -f1)"
 	d_port="$(echo $portpair | cut -d':' -f2)"
-        tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip sport $s_port 0xffff match ip dport $d_port 0xffff flowid 1:1
+	if [[ $APPLY_TO_TCP -eq 1 ]]; then
+          tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip protocol 6 0xff match ip sport $s_port 0xffff match ip dport $d_port 0xffff flowid 1:1
+	fi
+	if [[ $APPLY_TO_UDP -eq 1 ]]; then
+          tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip protocol 17 0xff match ip sport $s_port 0xffff match ip dport $d_port 0xffff flowid 1:1
+	fi
+	if [[ $APPLY_TO_TCP -eq 0 ]] && [[ $APPLY_TO_UDP -eq 0 ]]; then
+          tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip sport $s_port 0xffff match ip dport $d_port 0xffff flowid 1:1
+        fi
       done
+      #if no ports specified check for "all ports" tcp and udp
+      if [[ $SPECIFIC_PORTS -eq 0 ]]; then
+	if [[ $APPLY_TO_TCP -eq 1 ]]; then
+          SPECIFIC_TRAFFIC=1
+          tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip protocol 6 0xff flowid 1:1
+	fi
+	if [[ $APPLY_TO_UDP -eq 1 ]]; then
+          SPECIFIC_TRAFFIC=1
+          tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip protocol 17 0xff flowid 1:1
+	fi
+      fi
       #if specific filers are not applied send all traffic to 1:1 (impaired)
       if [[ $SPECIFIC_TRAFFIC -eq 0 ]]; then
         tc filter add dev $IFACE parent 1: protocol all prio 9 u32 match u32 0 0 flowid 1:1
       fi
+      #all unfiltered traffic is by default sent to unimpaired
       #tc qdisc add dev $IFACE root netem $DELAY_PART $LOSS_PART
       exit 0
    else
@@ -260,6 +337,7 @@ fi
 
 ###### uplink limitiations
 SPECIFIC_TRAFFIC=0
+SPECIFIC_PORTS=0
 if [[ -n $USPEED ]]; then
   # install root CBQ
   tc qdisc add dev $IFACE root handle 1: cbq avpkt 1000 bandwidth 10gbit 
@@ -309,32 +387,72 @@ if [[ -n $USPEED ]]; then
 
 
   # start filters
+  #Apply impairments to ICMP 
+  if [[ $APPLY_TO_ICMP -eq 1 ]]; then
+    SPECIFIC_TRAFFIC=1
+    tc filter add dev $IFACE protocol ip parent 1:0 prio 1 u32 match ip protocol 1 0xff flowid 1:1
+  fi
+  #Apply impairments to TCP and UDP
   for port in $DPORTS
   do
-    tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip dport $port 0xffff flowid 1:1
     SPECIFIC_TRAFFIC=1
+    SPECIFIC_PORTS=1
+    if [[ $APPLY_TO_TCP -eq 1 ]]; then
+      tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip protocol 6 0xff match ip dport $port 0xffff flowid 1:1
+    fi
+    if [[ $APPLY_TO_UDP -eq 1 ]]; then
+      tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip protocol 17 0xff match ip dport $port 0xffff flowid 1:1
+    fi
+    if [[ $APPLY_TO_TCP -eq 0 ]] && [[ $APPLY_TO_UDP -eq 0 ]]; then
+      tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip dport $port 0xffff flowid 1:1
+    fi
   done
   for port in $SPORTS
   do
-    tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip sport $port 0xffff flowid 1:1
     SPECIFIC_TRAFFIC=1
+    SPECIFIC_PORTS=1
+    if [[ $APPLY_TO_TCP -eq 1 ]]; then
+      tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip protocol 6 0xff match ip sport $port 0xffff flowid 1:1
+    fi
+    if [[ $APPLY_TO_UDP -eq 1 ]]; then
+      tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip protocol 17 0xff match ip sport $port 0xffff flowid 1:1
+    fi
+    if [[ $APPLY_TO_TCP -eq 0 ]] && [[ $APPLY_TO_UDP -eq 0 ]]; then
+      tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip sport $port 0xffff flowid 1:1
+    fi
   done
   for portpair in $PORTPAIRS
   do
+    SPECIFIC_TRAFFIC=1
+    SPECIFIC_PORTS=1
     s_port="$(echo $portpair | cut -d':' -f1)"
     d_port="$(echo $portpair | cut -d':' -f2)"
-    tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip sport $s_port 0xffff match ip dport $d_port 0xffff flowid 1:1
-    SPECIFIC_TRAFFIC=1
+    if [[ $APPLY_TO_TCP -eq 1 ]]; then
+      tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip protocol 6 0xff match ip sport $s_port 0xffff match ip dport $d_port 0xffff flowid 1:1
+    fi
+    if [[ $APPLY_TO_UDP -eq 1 ]]; then
+      tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip protocol 17 0xff match ip sport $s_port 0xffff match ip dport $d_port 0xffff flowid 1:1
+    fi
+    if [[ $APPLY_TO_TCP -eq 0 ]] && [[ $APPLY_TO_UDP -eq 0 ]]; then
+      tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip sport $s_port 0xffff match ip dport $d_port 0xffff flowid 1:1
+    fi
   done
-  #Apply impairments to ICMP if specified
-  if [[ $APPLY_TO_ICMP -eq 1 ]]; then
-    tc filter add dev $IFACE protocol ip parent 1:0 prio 1 u32 match ip protocol 1 0xff flowid 1:1
+  #if no ports specified check for "all ports" tcp and udp
+  if [[ $SPECIFIC_PORTS -eq 0 ]]; then
+    if [[ $APPLY_TO_TCP -eq 1 ]]; then
+      SPECIFIC_TRAFFIC=1
+      tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip protocol 6 0xff flowid 1:1
+    fi
+    if [[ $APPLY_TO_UDP -eq 1 ]]; then
+      SPECIFIC_TRAFFIC=1
+      tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip protocol 17 0xff flowid 1:1
+    fi
   fi
   if [[ $SPECIFIC_TRAFFIC -eq 0 ]]; then
     #if specific filers are not applied send all traffic to 1:1 (impaired)
     tc filter add dev $IFACE parent 1: protocol all prio 9 u32 match u32 0 0 flowid 1:1
   else
-    #traffic without specified ports sent to 1:2 (not impaired)
+    #traffic without specified protocols and ports sent to 1:2 (not impaired)
     tc filter add dev $IFACE parent 1: protocol all prio 9 u32 match u32 0 0 flowid 1:2
   fi
 
