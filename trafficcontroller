@@ -264,6 +264,7 @@ if [[ -z $DSPEED ]] && [[ -z $USPEED ]]; then
       if [[ $APPLY_TO_ICMP -eq 1 ]]; then
         SPECIFIC_TRAFFIC=1
         tc filter add dev $IFACE protocol ip parent 1:0 prio 1 u32 match ip protocol 1 0xff flowid 1:1
+	#echo "icmp"
       fi
       #Apply impairments to TCP and UDP
       for port in $DPORTS
@@ -314,16 +315,17 @@ if [[ -z $DSPEED ]] && [[ -z $USPEED ]]; then
       if [[ $SPECIFIC_PORTS -eq 0 ]]; then
 	if [[ $APPLY_TO_TCP -eq 1 ]]; then
           SPECIFIC_TRAFFIC=1
-          tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip protocol 6 0xff flowid 1:1
+          tc filter add dev $IFACE parent 1: protocol ip prio 2 u32 match ip protocol 6 0xff flowid 1:1
 	fi
 	if [[ $APPLY_TO_UDP -eq 1 ]]; then
           SPECIFIC_TRAFFIC=1
-          tc filter add dev $IFACE parent 1: protocol ip prio 1 u32 match ip protocol 17 0xff flowid 1:1
+          tc filter add dev $IFACE parent 1: protocol ip prio 2 u32 match ip protocol 17 0xff flowid 1:1
 	fi
       fi
       #if specific filers are not applied send all traffic to 1:1 (impaired)
       if [[ $SPECIFIC_TRAFFIC -eq 0 ]]; then
         tc filter add dev $IFACE parent 1: protocol all prio 9 u32 match u32 0 0 flowid 1:1
+        #tc filter add dev $IFACE parent 1: matchall flowid 1:1
       fi
       #all unfiltered traffic is by default sent to unimpaired
       #tc qdisc add dev $IFACE root netem $DELAY_PART $LOSS_PART
@@ -450,10 +452,10 @@ if [[ -n $USPEED ]]; then
   fi
   if [[ $SPECIFIC_TRAFFIC -eq 0 ]]; then
     #if specific filers are not applied send all traffic to 1:1 (impaired)
-    tc filter add dev $IFACE parent 1: protocol all prio 9 u32 match u32 0 0 flowid 1:1
+    tc filter add dev $IFACE parent 1: protocol all prio 2 u32 match u32 0 0 flowid 1:1
   else
     #traffic without specified protocols and ports sent to 1:2 (not impaired)
-    tc filter add dev $IFACE parent 1: protocol all prio 9 u32 match u32 0 0 flowid 1:2
+    tc filter add dev $IFACE parent 1: protocol all prio 2 u32 match u32 0 0 flowid 1:2
   fi
 
   # TOS Minimum Delay (ssh, NOT scp) in 1:10:
@@ -515,7 +517,6 @@ if [[ -n $DSPEED ]]; then
   # attach ingress policer:
 
   tc qdisc add dev $IFACE handle ffff: ingress
-
   # OLD VERSION: filter *everything* to it (0.0.0.0/0), drop everything that's
   # coming in too fast:
 
