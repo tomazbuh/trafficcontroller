@@ -39,6 +39,11 @@ The following command line options are allowed:
                       Currently supported protocol filters: icmp, udp and tcp). 
                       To specify ports for tcp and udp see options: -i, -o and -r. Otherwise 
                       all ports will be used. 
+- `-w <type>`         Select interface/traffic types for applying filters.
+                      Currently supported types: all (default), ip and vlan). 
+                      By default 'all' interface types are fitered. If you specify 'vlan' only
+                      vlan tagged traffic will be impaired, if you specify 'ip' only untagged 
+                      traffic will be impaired.
 - `-i <port,...>`     Set source port numbers for tcp or udp (see -b)
                       (if no protocol is specified with -b option both protocols are selected)
 - `-o <port,...>`     Set destination port numbers for tcp or udp (see -b)
