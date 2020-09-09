@@ -35,11 +35,21 @@ The following command line options are allowed:
 
 - `-a <adapter>` Set the adapter
 
-- `-i <port>` Set source port numbers (limitations will apply only on ip traffic with specified source port)
-
-- `-o <port>` Set destination port numbers (limitations will apply only on ip traffic with specified destination port)
-
-- `-r <srcp:dstp,...>` Set source/destination port number pairs (limitations will apply only on ip traffic with specified source and destination ports)
+- `-b <protocol,...>` Apply impairments on specific protocols. Otherwise all traffic is impaired. 
+                      Currently supported protocol filters: icmp, udp and tcp). 
+                      To specify ports for tcp and udp see options: -i, -o and -r. Otherwise 
+                      all ports will be used. 
+- `-w <type>`         Select interface/traffic types for applying filters.
+                      Currently supported types: all (default), ip and vlan). 
+                      By default 'all' interface types are fitered. If you specify 'vlan' only
+                      vlan tagged traffic will be impaired, if you specify 'ip' only untagged 
+                      traffic will be impaired.
+- `-i <port,...>`     Set source port numbers for tcp or udp (see -b)
+                      (if no protocol is specified with -b option both protocols are selected)
+- `-o <port,...>`     Set destination port numbers for tcp or udp (see -b)
+                      (if no protocol is specified with -b option both protocols are selected)
+- `-r <srcp:dstp,...>`Set source/destination port number pairs for tcp or udp (see -b)
+                      (if no protocol is specified with -b option both protocols are selected)
 
 - `-d <rate>` Set maximum download rate (in Kbps)
 
@@ -60,8 +70,6 @@ The following command line options are allowed:
                     1.50 1.43 1.33 1.30 1.25 1.17 1.11 1.05 1.00 
 
 - `-f` Use fair queuing - SFQ instead od pfifo. 
-
-- `-b` Apply impairments on ICMP protocol
 
 - `-p` Use the presets in /etc/conf.d/trafficcontroller.conf
 
@@ -94,6 +102,9 @@ Some examples:
         #Specify the same impairment on traffic on ip traffic with destination port 5060
 
 	trafficcontroller -a eth0 -t 120 -j 30  -o 5060
+        
+        #Specify the same impairment on traffic on udp and icmp traffic with destination port 5060
+	trafficcontroller -a eth0 -t 120 -j 30  -o 5060 -b udp,icmp
 
 	#Include packet loss  
 
